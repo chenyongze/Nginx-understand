@@ -27,19 +27,22 @@ nginx提供了ngx_http_memcached模块，提供从memcache读取数据的功能�
 下面，我们开始分析ngx_http_memcached模块，一窥upstream的奥秘。
 
 Handler模块？
-
+```
 初看memcached模块，大家可能觉得并无特别之处。如果稍微细看，甚至觉得有点像handler模块，当大家看到这段代码以后，必定疑惑为什么会跟handler模块一模一样。
 
 clcf = ngx_http_conf_get_module_loc_conf(cf, ngx_http_core_module);
 clcf->handler = ngx_http_memcached_handler;
 因为upstream模块使用的就是handler模块的接入方式。同时，upstream模块的指令系统的设计也是遵循handler模块的基本规则：配置该模块才会执行该模块。
 
-{ ngx_string("memcached_pass"),
+{
+ngx_string("memcached_pass"),
   NGX_HTTP_LOC_CONF|NGX_HTTP_LIF_CONF|NGX_CONF_TAKE1,
   ngx_http_memcached_pass,
   NGX_HTTP_LOC_CONF_OFFSET,
   0,
-  NULL }
+  NULL
+  }
+  ```
 所以大家觉得眼熟是好事，说明大家对Handler的写法已经很熟悉了。
 
 Upstream模块！
@@ -47,7 +50,7 @@ Upstream模块！
 那么，upstream模块的特别之处究竟在哪里呢？答案是就在模块处理函数的实现中。upstream模块的处理函数进行的操作都包含一个固定的流程。在memcached的例子中，可以观察ngx_http_memcached_handler的代码，可以发现，这个固定的操作流程是：
 
 1. 创建upstream数据结构。
-
+```
 if (ngx_http_upstream_create(r) != NGX_OK) {
     return NGX_HTTP_INTERNAL_SERVER_ERROR;
 }
@@ -62,7 +65,7 @@ u->output.tag = (ngx_buf_tag_t) &ngx_http_memcached_module;
 mlcf = ngx_http_get_module_loc_conf(r, ngx_http_memcached_module);
 u->conf = &mlcf->upstream;
 4. 设置upstream回调函数。在这里列出的代码稍稍调整了代码顺序。
-```
+
 u->create_request = ngx_http_memcached_create_request;
 u->reinit_request = ngx_http_memcached_reinit_request;
 u->process_header = ngx_http_memcached_process_header;
@@ -211,7 +214,7 @@ ngx_http_upstream_ip_hash(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 }
 ```
 这段代码中有两点值得我们注意。一个是uscf->flags的设置，另一个是设置init_upstream回调。
-
+```
 设置uscf->flags
 
 NGX_HTTP_UPSTREAM_CREATE：创建标志，如果含有创建标志的话，nginx会检查重复创建，以及必要参数是否填写；
@@ -228,14 +231,18 @@ NGX_HTTP_UPSTREAM_BACKUP：可以在server中使用backup属性。
 
 nginx初始化upstream时，会在ngx_http_upstream_init_main_conf函数中调用设置的回调函数初始化负载均衡模块。这里不太好理解的是uscf的具体位置。通过下面的示意图，说明upstream负载均衡模块的配置的内存布局。
 
+```
+
 ![](http://tengine.taobao.org/book/_images/chapter-5-1.PNG)
 从图上可以看出，MAIN_CONF中ngx_upstream_module模块的配置项中有一个指针数组upstreams，数组中的每个元素对应就是配置文件中每一个upstream{}的信息。更具体的将会在后面的原理篇讨论。
 
 初始化配置
 init_upstream回调函数执行时需要初始化负载均衡模块的配置，还要设置一个新钩子，这个钩子函数会在nginx处理每个请求时作为初始化函数调用，关于这个新钩子函数的功能，后面会有详细的描述。这里，我们先分析IP hash模块初始化配置的代码：
-
+```
 ngx_http_upstream_init_round_robin(cf, us);
 us->peer.init = ngx_http_upstream_init_ip_hash_peer;
+```
+
 这段代码非常简单：IP hash模块首先调用另一个负载均衡模块Round Robin的初始化函数，然后再设置自己的处理请求阶段初始化钩子。实际上几个负载均衡模块可以组成一条链表，每次都是从链首的模块开始进行处理。如果模块决定不处理，可以将处理权交给链表中的下一个模块。这里，IP hash模块指定Round Robin模块作为自己的后继负载均衡模块，所以在自己的初始化配置函数中也对Round Robin模块进行初始化。
 
 初始化请求
@@ -243,11 +250,14 @@ nginx收到一个请求以后，如果发现需要访问upstream，就会执行�
 
 为了讨论peer.init的核心，我们还是看IP hash模块的实现：
 
+```
 r->upstream->peer.data = &iphp->rrp;
 
 ngx_http_upstream_init_round_robin_peer(r, us);
 
 r->upstream->peer.get = ngx_http_upstream_get_ip_hash_peer;
+```
+
 第一行是设置数据指针，这个指针就是指向前面提到的那张表；
 
 第二行是调用Round Robin模块的回调函数对该模块进行请求初始化。面前已经提到，一个负载均衡模块可以调用其他负载均衡模块以提供功能的补充。
@@ -268,6 +278,10 @@ A:	使用后端keepalive连接的时候，连接在使用完以后并不关闭�
 Q:	什么叫所有连接均不可用？
 A:	初始化请求的过程中，建立了一张表，get函数负责每次从这张表中不重复的取出一个连接，当无法从表中取得一个新的连接时，即所有连接均不可用。
 Q:	对于一个请求，peer.get函数可能被调用多次么？
-A:	正式如此。当某次peer.get函数得到的连接地址连接不上，或者请求对应的服务器得到异常响应，nginx会执行ngx_http_upstream_next，然后可能再次调用peer.get函数尝试别的连接。upstream整体流程如下：![](http://tengine.taobao.org/book/_images/chapter-5-2.PNG)
+A:	正式如此。当某次peer.get函数得到的连接地址连接不上，或者请求对应的服务器得到异常响应，nginx会执行ngx_http_upstream_next，然后可能再次调用peer.get函数尝试别的连接。
+
+upstream整体流程如下：
+![](http://tengine.taobao.org/book/_images/chapter-5-2.PNG)
+
 本节回顾
 这一节介绍了负载均衡模块的基本组成。负载均衡模块的配置区集中在upstream{}块中。负载均衡模块的回调函数体系是以init_upstream为起点，经历init_peer，最终到达peer.get和peer.free。其中init_peer负责建立每个请求使用的server列表，peer.get负责从server列表中选择某个server（一般是不重复选择），而peer.free负责server释放前的资源释放工作。最后，这一节通过一张图将upstream模块和负载均衡模块在请求处理过程中的相互关系展现出来。
