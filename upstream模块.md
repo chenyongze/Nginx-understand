@@ -10,7 +10,7 @@ upstream模块接口
 从本质上说，upstream属于handler，只是他不产生自己的内容，而是通过请求后端服务器得到内容，所以才称为upstream（上游）。请求并取得响应内容的整个过程已经被封装到nginx内部，所以upstream模块只需要开发若干回调函数，完成构造请求和解析响应等具体的工作。
 
 这些回调函数如下表所示：
-
+```
 create_request	生成发送到后端服务器的请求缓冲（缓冲链），在初始化upstream 时使用。
 reinit_request	在某台后端服务器出错的情况，nginx会尝试另一台后端服务器。 nginx选定新的服务器以后，会先调用此函数，以重新初始化 upstream模块的工作状态，然后再次进行upstream连接。
 process_header	处理后端服务器返回的信息头部。所谓头部是与upstream server 通信的协议规定的，比如HTTP协议的header部分，或者memcached 协议的响应状态部分。
@@ -18,6 +18,7 @@ abort_request	在客户端放弃请求时被调用。不需要在函数中实现
 finalize_request	正常完成与后端服务器的请求后调用该函数，与abort_request 相同，一般也不会进行任何具体工作。
 input_filter	处理后端服务器返回的响应正文。nginx默认的input_filter会 将收到的内容封装成为缓冲区链ngx_chain。该链由upstream的 out_bufs指针域定位，所以开发人员可以在模块以外通过该指针 得到后端服务器返回的正文数据。memcached模块实现了自己的 input_filter，在后面会具体分析这个模块。
 input_filter_init	初始化input filter的上下文。nginx默认的input_filter_init 直接返回。
+```
 memcached模块分析
 memcache是一款高性能的分布式cache系统，得到了非常广泛的应用。memcache定义了一套私有通信协议，使得不能通过HTTP请求来访问memcache。但协议本身简单高效，而且memcache使用广泛，所以大部分现代开发语言和平台都提供了memcache支持，方便开发者使用memcache。
 
@@ -61,7 +62,7 @@ u->output.tag = (ngx_buf_tag_t) &ngx_http_memcached_module;
 mlcf = ngx_http_get_module_loc_conf(r, ngx_http_memcached_module);
 u->conf = &mlcf->upstream;
 4. 设置upstream回调函数。在这里列出的代码稍稍调整了代码顺序。
-
+```
 u->create_request = ngx_http_memcached_create_request;
 u->reinit_request = ngx_http_memcached_reinit_request;
 u->process_header = ngx_http_memcached_process_header;
@@ -69,8 +70,10 @@ u->abort_request = ngx_http_memcached_abort_request;
 u->finalize_request = ngx_http_memcached_finalize_request;
 u->input_filter_init = ngx_http_memcached_filter_init;
 u->input_filter = ngx_http_memcached_filter;
-5. 创建并设置upstream环境数据结构。
+```
 
+5. 创建并设置upstream环境数据结构。
+```
 ctx = ngx_palloc(r->pool, sizeof(ngx_http_memcached_ctx_t));
 if (ctx == NULL) {
     return NGX_HTTP_INTERNAL_SERVER_ERROR;
@@ -82,11 +85,13 @@ ctx->request = r;
 ngx_http_set_ctx(r, ctx, ngx_http_memcached_module);
 
 u->input_filter_ctx = ctx;
+```
 6. 完成upstream初始化并进行收尾工作。
-
+```
 r->main->count++;
 ngx_http_upstream_init(r);
 return NGX_DONE;
+```
 任何upstream模块，简单如memcached，复杂如proxy、fastcgi都是如此。不同的upstream模块在这6步中的最大差别会出现在第2、3、4、5上。其中第2、4两步很容易理解，不同的模块设置的标志和使用的回调函数肯定不同。第5步也不难理解，只有第3步是最为晦涩的，不同的模块在取得后端服务器列表时，策略的差异非常大，有如memcached这样简单明了的，也有如proxy那样逻辑复杂的。这个问题先记下来，等把memcached剖析清楚了，再单独讨论。
 
 第6步是一个常态。将count加1，然后返回NGX_DONE。nginx遇到这种情况，虽然会认为当前请求的处理已经结束，但是不会释放请求使用的内存资源，也不会关闭与客户端的连接。之所以需要这样，是因为nginx建立了upstream请求和客户端请求之间一对一的关系，在后续使用ngx_event_pipe将upstream响应发送回客户端时，还要使用到这些保存着客户端信息的数据结构。这部分会在后面的原理篇做具体介绍，这里不再展开。
@@ -96,7 +101,7 @@ return NGX_DONE;
 回调函数
 
 前面剖析了memcached模块的骨架，现在开始逐个解决每个回调函数。
-
+```
 1. ngx_http_memcached_create_request：很简单的按照设置的内容生成一个key，接着生成一个“get $key”的请求，放在r->upstream->request_bufs里面。
 
 2. ngx_http_memcached_reinit_request：无需初始化。
@@ -111,12 +116,13 @@ for (p = u->buffer.pos; p < u->buffer.last; p++) {
     if ( * p == LF) {
     goto found;
 }
+```
 如果在已读入缓冲的数据中没有发现LF(‘n’)字符，函数返回NGX_AGAIN，表示头部未完全读入，需要继续读取数据。nginx在收到新的数据以后会再次调用该函数。
 
 nginx处理后端服务器的响应头时只会使用一块缓存，所有数据都在这块缓存中，所以解析头部信息时不需要考虑头部信息跨越多块缓存的情况。而如果头部过大，不能保存在这块缓存中，nginx会返回错误信息给客户端，并记录error log，提示缓存不够大。
 
 process_header的重要职责是将后端服务器返回的状态翻译成返回给客户端的状态。例如，在ngx_http_memcached_process_header中，有这样几段代码：
-
+```
 r->headers_out.content_length_n = ngx_atoof(len, p - len - 1);
 
 u->headers_in.status_n = 200;
@@ -125,7 +131,7 @@ u->state->status = 200;
 u->headers_in.status_n = 404;
 u->state->status = 404;
 u->state用于计算upstream相关的变量。比如u->state->status将被用于计算变量“upstream_status”的值。u->headers_in将被作为返回给客户端的响应返回状态码。而第一行则是设置返回给客户端的响应的长度。
-
+```
 在这个函数中不能忘记的一件事情是处理完头部信息以后需要将读指针pos后移，否则这段数据也将被复制到返回给客户端的响应的正文中，进而导致正文内容不正确。
 
 u->buffer.pos = p + 1;
@@ -145,20 +151,22 @@ process_header函数完成响应头的正确处理，应该返回NGX_OK。如果
 要了解负载均衡模块的开发方法，首先需要了解负载均衡模块的使用方法。因为负载均衡模块与之前书中提到的模块差别比较大，所以我们从配置入手比较容易理解。
 
 在配置文件中，我们如果需要使用ip hash的负载均衡算法。我们需要写一个类似下面的配置：
-
+```
 upstream test {
     ip_hash;
 
     server 192.168.0.1;
     server 192.168.0.2;
 }
+```
 从配置我们可以看出负载均衡模块的使用场景： 1. 核心指令”ip_hash”只能在upstream {}中使用。这条指令用于通知nginx使用ip hash负载均衡算法。如果没加这条指令，nginx会使用默认的round robin负载均衡模块。请各位读者对比handler模块的配置，是不是有共同点？ 2. upstream {}中的指令可能出现在”server”指令前，可能出现在”server”指令后，也可能出现在两条”server”指令之间。各位读者可能会有疑问，有什么差别么？那么请各位读者尝试下面这个配置：
-
+```
 upstream test {
     server 192.168.0.1 weight=5;
     ip_hash;
     server 192.168.0.2 weight=7;
 }
+```
 神奇的事情出现了：
 
 nginx: [emerg] invalid parameter "weight=7" in nginx.conf:103
@@ -167,7 +175,7 @@ configuration file nginx.conf test failed
 
 指令
 配置决定指令系统，现在就来看ip_hash的指令定义：
-
+```
 static ngx_command_t  ngx_http_upstream_ip_hash_commands[] = {
 
     { ngx_string("ip_hash"),
@@ -179,11 +187,12 @@ static ngx_command_t  ngx_http_upstream_ip_hash_commands[] = {
 
     ngx_null_command
 };
+```
 没有特别的东西，除了指令属性是NGX_HTTP_UPS_CONF。这个属性表示该指令的适用范围是upstream{}。
 
 钩子
 以从前面的章节得到的经验，大家应该知道这里就是模块的切入点了。负载均衡模块的钩子代码都是有规律的，这里通过ip_hash模块来分析这个规律。
-
+```
 static char *
 ngx_http_upstream_ip_hash(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 {
@@ -200,6 +209,7 @@ ngx_http_upstream_ip_hash(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 
     return NGX_CONF_OK;
 }
+```
 这段代码中有两点值得我们注意。一个是uscf->flags的设置，另一个是设置init_upstream回调。
 
 设置uscf->flags
