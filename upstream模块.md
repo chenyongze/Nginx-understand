@@ -218,7 +218,7 @@ NGX_HTTP_UPSTREAM_BACKUP：可以在server中使用backup属性。
 
 nginx初始化upstream时，会在ngx_http_upstream_init_main_conf函数中调用设置的回调函数初始化负载均衡模块。这里不太好理解的是uscf的具体位置。通过下面的示意图，说明upstream负载均衡模块的配置的内存布局。
 
-[http://tengine.taobao.org/book/_images/chapter-5-1.PNG]
+![](http://tengine.taobao.org/book/_images/chapter-5-1.PNG)
 从图上可以看出，MAIN_CONF中ngx_upstream_module模块的配置项中有一个指针数组upstreams，数组中的每个元素对应就是配置文件中每一个upstream{}的信息。更具体的将会在后面的原理篇讨论。
 
 初始化配置
@@ -258,6 +258,6 @@ A:	使用后端keepalive连接的时候，连接在使用完以后并不关闭�
 Q:	什么叫所有连接均不可用？
 A:	初始化请求的过程中，建立了一张表，get函数负责每次从这张表中不重复的取出一个连接，当无法从表中取得一个新的连接时，即所有连接均不可用。
 Q:	对于一个请求，peer.get函数可能被调用多次么？
-A:	正式如此。当某次peer.get函数得到的连接地址连接不上，或者请求对应的服务器得到异常响应，nginx会执行ngx_http_upstream_next，然后可能再次调用peer.get函数尝试别的连接。upstream整体流程如下：http://tengine.taobao.org/book/_images/chapter-5-2.PNG
+A:	正式如此。当某次peer.get函数得到的连接地址连接不上，或者请求对应的服务器得到异常响应，nginx会执行ngx_http_upstream_next，然后可能再次调用peer.get函数尝试别的连接。upstream整体流程如下：![](http://tengine.taobao.org/book/_images/chapter-5-2.PNG)
 本节回顾
 这一节介绍了负载均衡模块的基本组成。负载均衡模块的配置区集中在upstream{}块中。负载均衡模块的回调函数体系是以init_upstream为起点，经历init_peer，最终到达peer.get和peer.free。其中init_peer负责建立每个请求使用的server列表，peer.get负责从server列表中选择某个server（一般是不重复选择），而peer.free负责server释放前的资源释放工作。最后，这一节通过一张图将upstream模块和负载均衡模块在请求处理过程中的相互关系展现出来。
